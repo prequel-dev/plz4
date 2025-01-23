@@ -12,7 +12,7 @@ import (
 
 type FrameReader struct {
 	rdr      io.Reader // data source
-	bsz      int       // blocksize as specifed in header
+	bsz      int       // blocksize as specified in header
 	srcSum   uint32    // contains content checksum if last frame and enabled
 	srcCheck bool      // parse content checksum on EOF
 	blkCheck bool      // validate hash on blocks

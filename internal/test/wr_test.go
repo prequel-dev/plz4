@@ -580,7 +580,7 @@ func TestWriteSkipFrame(t *testing.T) {
 		}
 	}
 
-	// Write intial skip frame
+	// Write initial skip frame
 	skip1 := []byte("skip1_block")
 	writeSkip(&buf, 1, skip1)
 

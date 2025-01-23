@@ -26,7 +26,7 @@ type Reader struct {
 
 // Construct a Reader to decompress the LZ4 Frame stream 'rdr'.
 //
-// Specify optional paramters in 'opts'.
+// Specify optional parameters in 'opts'.
 func NewReader(rdr io.Reader, o *opts.OptsT) *Reader {
 	// Will escape
 	return &Reader{
