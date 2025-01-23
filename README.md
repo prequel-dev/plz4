@@ -3,6 +3,7 @@
 [![license](http://img.shields.io/badge/license-BSD--2-red.svg?style=flat)](https://raw.githubusercontent.com/prequel-dev/plz4/main/LICENSE)
 [![Build Status](https://github.com/prequel-dev/plz4/actions/workflows/test.yml/badge.svg)](https://github.com/prequel-dev/plz4/actions/workflows/test.yml)
 [![Go Coverage](https://github.com/prequel-dev/plz4/wiki/coverage.svg)](https://raw.githack.com/wiki/prequel-dev/plz4/coverage.html)
+[![Go Report Card](https://goreportcard.com/badge/github.com/prequel-dev/plz4)](https://goreportcard.com/report/github.com/prequel-dev/plz4)
 [![GitHub Tag](https://img.shields.io/github/tag/prequel-dev/plz4.svg?style=social)](https://github.com/prequel-dev/plz4/tags)
 
 The plz4 package provides a fast and simple golang library to encode and decode the [LZ4 Frame Format](./docs/lz4_Frame_Format.md) in parallel.  
