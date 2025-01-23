@@ -25,9 +25,10 @@ type asyncRdrT struct {
 }
 
 type inBlkT struct {
-	idx  int
-	blk  *blk.BlkT
-	dict *blk.BlkT
+	idx   int
+	srcSz int
+	blk   *blk.BlkT
+	dict  *blk.BlkT
 }
 
 type outBlkT struct {
@@ -164,8 +165,9 @@ LOOP:
 		} else {
 			// Otherwise, queue up on inChan for decompressor.
 			inBlk := inBlkT{
-				idx: curIdx,
-				blk: frame.Blk,
+				idx:   curIdx,
+				srcSz: frame.ReadCnt,
+				blk:   frame.Blk,
 			}
 
 			select {
@@ -196,9 +198,6 @@ LOOP:
 			break LOOP // inChan closed, we are done
 		}
 
-		// Set aside the source size for the outBlkT
-		srcSz := srcBlk.blk.Len()
-
 		// Decompress the source block
 		dstBlk, err := srcBlk.blk.Decompress(r.dc)
 
@@ -210,7 +209,7 @@ LOOP:
 			err:   err,
 			idx:   srcBlk.idx,
 			blk:   dstBlk,
-			srcSz: srcSz,
+			srcSz: srcBlk.srcSz,
 		}:
 		case <-r.finChan:
 			if dstBlk != nil {
