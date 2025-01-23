@@ -33,7 +33,7 @@ type Writer interface {
 
 // Construct a Writer to compress an LZ4 frame into 'wr'.
 //
-// Specify optional paramters in 'opts'.
+// Specify optional parameters in 'opts'.
 func NewWriter(wr io.Writer, opts ...OptT) Writer {
 	o := parseOpts(opts...)
 

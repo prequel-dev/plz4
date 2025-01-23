@@ -74,7 +74,6 @@ func CompressToBlk(src []byte, cmp compress.Compressor, bsz int, checksum bool, 
 		// If the src data is uncompressable for whatever reason,
 		//  write out the src block as non-compressed and keep on truckin'
 		n = 0
-		err = nil
 	}
 
 	var blkSz descriptor.DataBlockSize

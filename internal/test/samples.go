@@ -75,7 +75,7 @@ func LoadSample(t testing.TB, ty int) ([]byte, string) {
 	return nil, ""
 }
 
-// Return copy of the sample to allow maniuplation without corruption.
+// Return copy of the sample to allow manipulation without corruption.
 
 func DupeSample(t testing.TB, ty int) ([]byte, string) {
 	data, sha2 := LoadSample(t, ty)
