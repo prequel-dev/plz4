@@ -1,4 +1,5 @@
 # Parallel LZ4
+[![godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/prequel-dev/plz4)
 [![license](http://img.shields.io/badge/license-BSD--2-red.svg?style=flat)](https://raw.githubusercontent.com/prequel-dev/plz4/main/LICENSE)
 [![Build Status](https://github.com/prequel-dev/plz4/actions/workflows/test.yml/badge.svg)](https://github.com/prequel-dev/plz4/actions/workflows/test.yml)
 [![Go Coverage](https://github.com/prequel-dev/plz4/wiki/coverage.svg)](https://raw.githack.com/wiki/prequel-dev/plz4/coverage.html)
