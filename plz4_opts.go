@@ -104,6 +104,7 @@ func WithWorkerPool(wp WorkerPool) OptT {
 // Offsets are relative to the start of the frame.
 //
 // Note: Callback may be called from a secondary goroutine.
+// However, offsets will emit in order from only that goroutine.
 func WithProgress(cb CbProgressT) OptT {
 	return func(o *opts.OptsT) {
 		o.Handler = cb

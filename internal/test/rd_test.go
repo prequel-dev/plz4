@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	mrand "math/rand/v2"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1057,6 +1058,107 @@ func TestReadFail(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestReadProgress(t *testing.T) {
+
+	tests := map[string]struct {
+		wopts []Option
+		ropts []Option
+		read  bool
+	}{
+		"no_crc_async": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB)},
+			ropts: []Option{plz4.WithParallel(4)},
+		},
+		"no_crc_sync": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB)},
+			ropts: []Option{plz4.WithParallel(0)},
+		},
+		"with_crc_async": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB), plz4.WithBlockChecksum(true)},
+			ropts: []Option{plz4.WithParallel(4)},
+		},
+		"with_crc_sync": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB), plz4.WithBlockChecksum(true)},
+			ropts: []Option{plz4.WithParallel(0)},
+		},
+		"no_crc_async_read": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB)},
+			ropts: []Option{plz4.WithParallel(4)},
+			read:  true,
+		},
+		"no_crc_sync_read": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB)},
+			ropts: []Option{plz4.WithParallel(0)},
+			read:  true,
+		},
+		"with_crc_async_read": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB), plz4.WithBlockChecksum(true)},
+			ropts: []Option{plz4.WithParallel(4)},
+			read:  true,
+		},
+		"with_crc_sync_read": {
+			wopts: []Option{plz4.WithBlockSize(plz4.BlockIdx64KB), plz4.WithBlockChecksum(true)},
+			ropts: []Option{plz4.WithParallel(0)},
+			read:  true,
+		},
+	}
+
+	for name, tc := range tests {
+
+		t.Run(name, func(t *testing.T) {
+			m1 := make(map[int64]int64)
+			cb1 := func(srcOff, dstOff int64) {
+				m1[srcOff] = dstOff
+			}
+
+			wopts := append(tc.wopts, plz4.WithProgress(cb1))
+
+			// Generate lz4 and use callback to cache offset map.
+			// Write tests validate that the writer generates offsets correctly.
+			_, src := generateLz4(
+				t,
+				wopts...,
+			)
+
+			// Now scan with a reader and generate offsets
+			m2 := make(map[int64]int64, len(m1))
+			cb2 := func(srcOff, dstOff int64) {
+				m2[dstOff] = srcOff
+			}
+
+			ropts := append(tc.ropts, plz4.WithProgress(cb2))
+
+			rd := plz4.NewReader(&src, ropts...)
+
+			if tc.read {
+				dst := make([]byte, 1<<20)
+			LOOP:
+				for {
+					_, err := rd.Read(dst)
+
+					switch {
+					case err == nil:
+					case errors.Is(err, io.EOF):
+						break LOOP
+					default:
+						t.Fatalf("Fail read next: %v", err)
+					}
+				}
+			} else {
+				if _, err := rd.WriteTo(io.Discard); err != nil {
+					t.Fatalf("Fail Writeto")
+				}
+			}
+
+			if ok := reflect.DeepEqual(m1, m2); !ok {
+				t.Error("Progress maps do not align")
+			}
+
+		})
+	}
+
 }
 
 // Cancel async read in progress.  A slow

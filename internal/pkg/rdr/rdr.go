@@ -220,7 +220,9 @@ func (r *Reader) nextBlock() (err error) {
 }
 
 func (r *Reader) modeHeader(dst []byte) (int, error) {
-	_, err := r._readHeader()
+	n, err := r._readHeader()
+
+	r.srcPos += int64(n)
 
 	if err != nil {
 		return 0, err
