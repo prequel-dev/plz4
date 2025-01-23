@@ -25,7 +25,7 @@ jobs:
     - name: Test
       run: go test -short -v  ./... -coverpkg "github.com/prequel-dev/plz4,github.com/prequel-dev/plz4/internal/...,github.com/prequel-dev/plz4/pkg/..." -coverprofile coverage.out
     - name: Upload coverage as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage.out
         path: coverage.out
@@ -37,7 +37,7 @@ jobs:
         contents: write  # This grants write access to the repository, including the Wiki.  
     steps:
     - name: Download coverage artifact
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: coverage.out
         path: ~/coverage.out
