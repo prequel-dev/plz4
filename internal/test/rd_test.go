@@ -720,11 +720,12 @@ func TestContentCRC(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		data  []byte
-		sha2  string
-		munge func([]byte) []byte
-		err   error
-		opts  []plz4.OptT
+		data    []byte
+		sha2    string
+		munge   func([]byte) []byte
+		err     error
+		corrupt bool
+		opts    []plz4.OptT
 	}{
 		"no_content_hash": {
 			data: oneFrameNoHash,
@@ -739,24 +740,27 @@ func TestContentCRC(t *testing.T) {
 			sha2: oneFrameSha2,
 		},
 		"munge_one_frame": {
-			data:  oneFrame,
-			munge: corruptCRC,
-			err:   plz4.ErrContentHash,
+			data:    oneFrame,
+			munge:   corruptCRC,
+			err:     plz4.ErrContentHash,
+			corrupt: true,
 		},
 		"clean_large": {
 			data: large,
 			sha2: lsha2,
 		},
 		"munged_large": {
-			data:  large,
-			munge: corruptCRC,
-			err:   plz4.ErrContentHash,
+			data:    large,
+			munge:   corruptCRC,
+			err:     plz4.ErrContentHash,
+			corrupt: true,
 		},
 		"munged_large_sync": {
-			data:  large,
-			munge: corruptCRC,
-			err:   plz4.ErrContentHash,
-			opts:  []Option{plz4.WithParallel(0)},
+			data:    large,
+			munge:   corruptCRC,
+			err:     plz4.ErrContentHash,
+			opts:    []Option{plz4.WithParallel(0)},
+			corrupt: true,
 		},
 		"large_clipped": {
 			data: large[:len(large)-4],
@@ -781,6 +785,11 @@ func TestContentCRC(t *testing.T) {
 			}
 
 			if tc.err != nil || err != nil {
+
+				if tc.corrupt != plz4.Lz4Corrupted(err) {
+					t.Errorf("Corrupt mismatch;  wanted: %v on '%v'", tc.corrupt, err)
+				}
+
 				if !errors.Is(err, tc.err) {
 					t.Fatalf("Expected error: %v got %v", tc.err, err)
 				}
