@@ -8,6 +8,9 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/sync"
 )
 
+// Writer is an interface for compressing data into an LZ4 frame.
+//
+// It implements the io.WriteCloser and the io.ReaderFrom interfaces.
 type Writer interface {
 	// Compress 'src' data; return number of bytes written.
 	// May be used in sequence with ReadFrom.
@@ -31,7 +34,7 @@ type Writer interface {
 	Close() error
 }
 
-// Construct a Writer to compress an LZ4 frame into 'wr'.
+// Construct a Writer to compress data into an LZ4 frame written to 'wr'.
 //
 // Specify optional parameters in 'opts'.
 func NewWriter(wr io.Writer, opts ...OptT) Writer {

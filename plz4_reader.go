@@ -6,6 +6,9 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/rdr"
 )
 
+// Reader is an interface for reading LZ4 compressed data.
+//
+// It implements the io.ReadCloser and the io.WriterTo interfaces.
 type Reader interface {
 	// Read decompressed data into 'dst'.  Return number bytes read.
 	Read(dst []byte) (n int, err error)
@@ -19,7 +22,7 @@ type Reader interface {
 	Close() error
 }
 
-// Construct a Reader to decompress the LZ4 frame from 'rdr'.
+// Construct a Reader to decompress the LZ4 frame from 'rd'.
 //
 // Specify optional parameters in 'opts'.
 func NewReader(rd io.Reader, opts ...OptT) Reader {

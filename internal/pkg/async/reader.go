@@ -237,7 +237,7 @@ func (r *asyncRdrT) NextBlock(prevBlk *blk.BlkT) (*blk.BlkT, int, error) {
 	case err != zerr.EndMark:
 	case r.hasher == nil:
 	case r.hasher.Done() != r.frameRdr.ContentChecksum():
-		err = zerr.ErrContentHash
+		err = zerr.WrapCorrupted(zerr.ErrContentHash)
 	}
 
 	return nextBlk, nRead, err

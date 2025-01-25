@@ -8,13 +8,25 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/opts"
 )
 
+// OptT is a function that sets an option on the processor.
 type OptT func(*opts.OptsT)
+
+// WorkerPool is an interface for a worker pool implementation.
 type WorkerPool = opts.WorkerPool
+
+// BlockIdxT is a type for block size index.
 type BlockIdxT = descriptor.BlockIdxT
+
+// LevelT is a type for compression level.
 type LevelT = compress.LevelT
 
+// Progress callback function type.
 type CbProgressT = opts.ProgressFuncT
+
+// Skip callback function type.
 type CbSkipT = opts.SkipCallbackT
+
+// Dictionary callback function type.
 type CbDictT = opts.DictCallbackT
 
 const (
@@ -73,7 +85,7 @@ func WithParallel(n int) OptT {
 // This option only applies to the asynchronous case.
 // It is ignored in the synchronous case.
 //
-// Setting the size to -1 forces auto mode, where the processor will automatically
+// Setting the pending size to -1 enables auto mode.  In auto mode, the processor will automatically
 // scale the pending size for maximum speed based on the block size and nParallel.
 func WithPendingSize(n int) OptT {
 	return func(o *opts.OptsT) {
@@ -91,7 +103,7 @@ func WithContentChecksum(enable bool) OptT {
 	}
 }
 
-// Optional worker pool for both compress and decompress mode.
+// Optional worker pool for both compress and decompress modes.
 func WithWorkerPool(wp WorkerPool) OptT {
 	return func(o *opts.OptsT) {
 		o.WorkerPool = wp
@@ -99,7 +111,7 @@ func WithWorkerPool(wp WorkerPool) OptT {
 }
 
 // Processor will emit tuple (src_block_offset, dst_blk_offset) on each
-// block boundary.  Applies to both compress and decompress mode.
+// block boundary.  Applies to both compress and decompress modes.
 //
 // Offsets are relative to the start of the frame.
 //
@@ -181,7 +193,7 @@ func WithDictionaryId(id uint32) OptT {
 
 // Read block starting at byte 'offset'.
 //
-// The offset is the first byte of the block relative to the start of the frame.
+// The offset is the first byte of the data block relative to the start of the frame.
 func WithReadOffset(offset int64) OptT {
 	return func(o *opts.OptsT) {
 		o.ReadOffset = offset

@@ -35,6 +35,10 @@ const (
 )
 
 // Returns true if 'err' indicates that the read input is corrupted.
+//
+// Note that a short read is not considered corrupted. In that case
+// the returned error will be a join of the error context, and the
+// underlying error, either an io.EOF or io.ErrUnexpectedEOF.
 func Lz4Corrupted(err error) bool {
 	return errors.Is(err, ErrCorrupted)
 }

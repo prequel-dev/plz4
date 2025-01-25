@@ -64,7 +64,7 @@ func (r *syncReaderT) NextBlock(prevBlk *BlkT) (*BlkT, int, error) {
 	case zerr.EndMark:
 		if r.hasher != nil {
 			if r.hasher.Sum32() != r.frameRdr.ContentChecksum() {
-				err = zerr.ErrContentHash
+				err = zerr.WrapCorrupted(zerr.ErrContentHash)
 			}
 		}
 		fallthrough
