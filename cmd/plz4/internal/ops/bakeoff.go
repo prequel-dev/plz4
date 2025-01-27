@@ -179,12 +179,6 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 		i = 0
 	)
 
-	bsz, err := parseBlockSize(CLI.Bakeoff.BS)
-	if err != nil {
-		return nil, err
-	}
-	bss := int64(bsz.Size())
-
 	tr := &progress.Tracker{
 		Message: "Processing lz4",
 		Total:   srcSz * 10,
@@ -193,10 +187,21 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 
 	pw.AppendTracker(tr)
 
-	// lz4 callback on write is odd, returns compressed block size
-	// Work around by assuming incremental block size and fix up for overflow
-	cbHandler := func(_ int) {
-		tr.Increment(bss)
+	// lz4 callback on write is buggy.  If you call through the Write interface,
+	// the handler gets called back once with the size of the compressed buffer.
+	// If you call through the ReadFrom interface, the handler gets called twice,
+	// once with the size of the compressed buffer and once with the size of the src.
+	// Work around by ignoring the first callback and accumulating the second.
+
+	cnt := 0
+	cbHandler := func(sz int) {
+		cnt += 1
+		if cnt%2 == 0 {
+			// Ignore every other callback; we only track the src size, effectively
+			// taking advantage of buggy implementation.  This is likely fragile assuming the
+			// bug will be fixed at some point.
+			tr.Increment(int64(sz))
+		}
 	}
 
 	opts = append(opts, lz4.OnBlockDoneOption(cbHandler))
@@ -537,7 +542,6 @@ func _parseBakeLz4Opts(srcSz int64) ([]lz4.Option, error) {
 
 func lz4Level(l int) (lz4.CompressionLevel, error) {
 
-	// Last one wins; so append is ok.
 	var lz4Level lz4.CompressionLevel
 	switch l {
 	case 0:
