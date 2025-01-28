@@ -16,6 +16,14 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/blk"
 )
 
+var cgoEnabled = true
+
+func maybeSkip(t *testing.T) {
+	if !cgoEnabled {
+		t.Skip("Skipping test that requires CGO")
+	}
+}
+
 type Option = plz4.OptT
 
 func testBorrowed(t testing.TB) {
@@ -64,11 +72,6 @@ func writeBasics(t *testing.T) map[string]writeBasicT {
 		"empty":             {hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
 		"level1":            defOpts(plz4.WithLevel(1)),
 		"level3":            defOpts(plz4.WithLevel(3)),
-		"dict_enabled":      dictOpts(),
-		"dict_HC":           dictOpts(plz4.WithLevel(3)),
-		"linked":            defOpts(plz4.WithBlockLinked(true)),
-		"linked_HC":         defOpts(plz4.WithBlockLinked(true), plz4.WithLevel(3)),
-		"linked_with_dict":  dictOpts(plz4.WithBlockLinked(true)),
 		"content_sum_on":    defOpts(plz4.WithContentChecksum(true)),
 		"content_sum_off":   defOpts(plz4.WithContentChecksum(false)),
 		"block_sum_on":      defOpts(plz4.WithBlockChecksum(true)),
@@ -83,9 +86,17 @@ func writeBasics(t *testing.T) map[string]writeBasicT {
 		"uncompressable":    {src: usrc, hash: uhash},
 	}
 
-	if !testing.Short() {
+	if cgoEnabled {
+		basics["dict_enabled"] = dictOpts()
+		basics["dict_HC"] = dictOpts(plz4.WithLevel(3))
+		basics["linked"] = defOpts(plz4.WithBlockLinked(true))
+		basics["linked_HC"] = defOpts(plz4.WithBlockLinked(true), plz4.WithLevel(3))
+		basics["linked_with_dict"] = dictOpts(plz4.WithBlockLinked(true))
+		if !testing.Short() {
+			basics["dict_12"] = dictOpts(plz4.WithLevel(12))
+		}
+	} else if !testing.Short() {
 		basics["level12"] = defOpts(plz4.WithLevel(12))
-		basics["dict_12"] = dictOpts(plz4.WithLevel(12))
 	}
 
 	return basics
@@ -284,6 +295,7 @@ func TestLz4FlushRandomParallel(t *testing.T) {
 
 // Test single step write and flush with linked mode.
 func TestLz4FlushOneByteAtATimeLinked(t *testing.T) {
+	maybeSkip(t)
 	defer testBorrowed(t)
 	lsrc, _ := LoadSample(t, LargeUncompressed)
 	shortSz := (1 << 20) + 11
@@ -291,6 +303,7 @@ func TestLz4FlushOneByteAtATimeLinked(t *testing.T) {
 }
 
 func TestLz4FlushRandomLinked(t *testing.T) {
+	maybeSkip(t)
 	defer testBorrowed(t)
 	lsrc, _ := LoadSample(t, LargeUncompressed)
 	testLz4FlushWrite(t, lsrc, randStep, plz4.WithParallel(4), plz4.WithBlockLinked(true))

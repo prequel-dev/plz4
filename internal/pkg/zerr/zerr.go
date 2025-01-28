@@ -33,6 +33,7 @@ const (
 	ErrReadOffsetLinked  constError = "lz4 read offset unsupported in block linked mode"
 	ErrSkip              constError = "lz4 fail skip"
 	ErrNibble            constError = "lz4 bad nibble"
+	ErrUnsupported       constError = "lz4 unsupported feature"
 )
 
 func WrapCorrupted(err error) error {

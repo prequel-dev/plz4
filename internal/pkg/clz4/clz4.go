@@ -1,3 +1,5 @@
+//go:build cgo
+
 package clz4
 
 // #cgo CFLAGS: -O3
