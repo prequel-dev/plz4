@@ -32,6 +32,7 @@ const (
 	ErrReadOffsetLinked  = zerr.ErrReadOffsetLinked
 	ErrSkip              = zerr.ErrSkip
 	ErrNibble            = zerr.ErrNibble
+	ErrUnsupported       = zerr.ErrUnsupported
 )
 
 // Returns true if 'err' indicates that the read input is corrupted.

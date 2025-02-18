@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 
+	"github.com/gammazero/workerpool"
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/pierrec/lz4/v4"
@@ -325,9 +327,12 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 			tr.SetValue(srcOff + (int64(i) * srcSz))
 		}
 
+		wp := workerpool.New(runtime.NumCPU())
+
 		opts = append(opts,
 			plz4.WithProgress(cbHandler),
 			plz4.WithPendingSize(-1),
+			plz4.WithWorkerPool(wp),
 		)
 
 		var results []resultT

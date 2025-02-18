@@ -2,10 +2,12 @@ package blk
 
 import (
 	"encoding/binary"
+	"errors"
 
 	"github.com/prequel-dev/plz4/internal/pkg/compress"
 	"github.com/prequel-dev/plz4/internal/pkg/descriptor"
 	"github.com/prequel-dev/plz4/internal/pkg/xxh32"
+	"github.com/prequel-dev/plz4/internal/pkg/zerr"
 )
 
 // Protect the 'data' slice to avoid an accidental
@@ -70,10 +72,16 @@ func CompressToBlk(src []byte, cmp compress.Compressor, bsz int, checksum bool, 
 
 	n, err := cmp.Compress(src, dstBlk.View(4, bsz+4), dict)
 
-	if err != nil {
+	switch {
+	case err == nil:
+		// NOOP
+	case errors.Is(err, zerr.ErrCompress):
 		// If the src data is uncompressable for whatever reason,
 		//  write out the src block as non-compressed and keep on truckin'
 		n = 0
+	default:
+		ReturnBlk(dstBlk)
+		return nil, err
 	}
 
 	var blkSz descriptor.DataBlockSize

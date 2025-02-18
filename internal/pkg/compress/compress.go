@@ -1,3 +1,5 @@
+//go:build cgo
+
 package compress
 
 import "github.com/prequel-dev/plz4/internal/pkg/clz4"

@@ -439,6 +439,7 @@ func TestReadWithDict(t *testing.T) {
 
 // Test files that have linked blocks (ie. not independent)
 func TestLinked(t *testing.T) {
+	maybeSkip(t)
 	defer testBorrowed(t)
 
 	var (
@@ -1324,6 +1325,7 @@ func TestReadOffsetBadSeek(t *testing.T) {
 
 // Validate parse and callback on dictId.
 func TestReadDictId(t *testing.T) {
+	maybeSkip(t)
 	defer testBorrowed(t)
 
 	// Create sample with a dictID
