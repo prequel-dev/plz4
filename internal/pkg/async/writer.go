@@ -13,6 +13,21 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/zerr"
 )
 
+type stateFlagT uint8
+
+const (
+	flagClosed   stateFlagT = 1 << iota // 0001 (binary)
+	flagReported                        // 0010 (binary)
+)
+
+func (f stateFlagT) IsSet(flag stateFlagT) bool {
+	return f&flag != 0
+}
+
+func (f *stateFlagT) Set(flag stateFlagT) {
+	*f |= flag
+}
+
 type asyncWriterT struct {
 	bsz     int
 	srcIdx  int
@@ -30,7 +45,7 @@ type asyncWriterT struct {
 	cmpF    compress.CompressorFactory
 	nTasks  int
 	state   atomic.Pointer[error]
-	report  bool
+	flags   stateFlagT
 }
 
 func NewAsyncWriter(wr io.Writer, opts *opts.OptsT) *asyncWriterT {
@@ -38,16 +53,11 @@ func NewAsyncWriter(wr io.Writer, opts *opts.OptsT) *asyncWriterT {
 	var (
 		bsz      = opts.BlockSizeIdx.Size()
 		cmpF     = opts.NewCompressorFactory()
-		srcBlk   = blk.BorrowBlk(bsz)
 		nPending = opts.CalcPending()
 	)
 
-	// Scope it down to our block size
-	srcBlk.Trim(bsz)
-
 	w := &asyncWriterT{
 		bsz:     bsz,
-		srcBlk:  srcBlk,
 		inChan:  make(chan inBlkT),
 		outChan: make(chan outBlkT),
 		synChan: make(chan int),
@@ -102,6 +112,12 @@ func (w *asyncWriterT) Write(src []byte) (int, error) {
 
 	for len(src) > 0 && !w.errState() {
 
+		if w.srcBlk == nil {
+			w.srcBlk = blk.BorrowBlk(w.bsz)
+			w.srcBlk.Trim(w.bsz)
+			w.srcOff = 0 // Should be NOOP
+		}
+
 		// Copy the source data into our srcBlk
 		n := copy(w.srcBlk.Suffix(w.srcOff), src)
 		w.srcOff += n
@@ -146,7 +162,7 @@ func (w *asyncWriterT) Flush() error {
 }
 
 func (w *asyncWriterT) Close() error {
-	if w.srcBlk == nil {
+	if w.flags.IsSet(flagClosed) {
 		return w.reportError()
 	}
 
@@ -172,7 +188,7 @@ func (w *asyncWriterT) Close() error {
 	// Wait for the writeLoop goroutine to exit
 	<-w.synChan
 
-	// Use srcBlk as sentinel for Close().
+	// Return the srcBlk to the pool
 	blk.ReturnBlk(w.srcBlk)
 	w.srcBlk = nil
 	w.srcOff = 0
@@ -184,7 +200,7 @@ func (w *asyncWriterT) Close() error {
 	var err error
 
 	switch {
-	case w.report:
+	case w.flags.IsSet(flagReported):
 		// Should return no error on Close() if error already reported
 	case !w.errState():
 		// If no error, set our internal error to ErrClosed for
@@ -197,6 +213,7 @@ func (w *asyncWriterT) Close() error {
 		err = w.reportError()
 	}
 
+	w.flags.Set(flagClosed)
 	return err
 }
 
@@ -205,6 +222,12 @@ func (w *asyncWriterT) ReadFrom(r io.Reader) (int64, error) {
 
 LOOP:
 	for !w.errState() {
+
+		if w.srcBlk == nil {
+			w.srcBlk = blk.BorrowBlk(w.bsz)
+			w.srcBlk.Trim(w.bsz)
+			w.srcOff = 0 // Should be NOOP
+		}
 
 		n, rerr := io.ReadFull(r, w.srcBlk.Suffix(w.srcOff))
 		w.srcOff += n
@@ -440,6 +463,10 @@ func (w *asyncWriterT) _genDict() (outDict *blk.BlkT) {
 }
 
 func (w *asyncWriterT) _flushBlk() {
+	if w.srcBlk == nil || w.srcOff == 0 {
+		// Nothing to flush; return
+		return
+	}
 
 	// Defer content hash to minimize pipeline blockage
 	if w.hasher != nil {
@@ -464,9 +491,7 @@ func (w *asyncWriterT) _flushBlk() {
 		w.opts.WorkerPool.Submit(w.taskF)
 	}
 
-	// Set up next block for write
-	w.srcBlk = blk.BorrowBlk(w.bsz)
-	w.srcBlk.Trim(w.bsz)
+	w.srcBlk = nil
 	w.srcOff = 0
 	w.srcIdx += 1
 }
@@ -487,7 +512,7 @@ func (w *asyncWriterT) reportError() error {
 		// Once we are in an error state, the state is marked reported
 		// if error is returned on a user facing API.
 		// Does not require mutex because only called from caller goroutine.
-		w.report = true
+		w.flags.Set(flagReported)
 	}
 	return err
 }
