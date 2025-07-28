@@ -25,24 +25,20 @@ type syncWriterT struct {
 	state   error
 	opts    *OptsT
 	srcHash *xxh32.XXHZero
+	closed  bool
 }
 
 func NewSyncWriter(wr io.Writer, opts *OptsT) *syncWriterT {
 
 	var (
 		bsz     = opts.BlockSizeIdx.Size()
-		srcBlk  = blk.BorrowBlk(bsz)
 		factory = opts.NewCompressorFactory()
 	)
-
-	// Scope it down to our block size
-	srcBlk.Trim(bsz)
 
 	w := &syncWriterT{
 		wr:     wr,
 		cmp:    factory.NewCompressor(),
 		bsz:    bsz,
-		srcBlk: srcBlk,
 		srcOff: -1,
 		opts:   opts,
 	}
@@ -88,6 +84,8 @@ func (w *syncWriterT) _write(src []byte) (nConsumed int, err error) {
 				return
 			}
 
+			blk.ReturnBlk(w.srcBlk)
+			w.srcBlk = nil
 			w.srcOff = 0
 		}
 
@@ -108,6 +106,10 @@ func (w *syncWriterT) _write(src []byte) (nConsumed int, err error) {
 
 			src = src[w.bsz:]
 		} else {
+
+			w.srcBlk = blk.BorrowBlk(w.bsz)
+			w.srcBlk.Trim(w.bsz)
+
 			// Cache the data in w.srcBlk for the next spin
 			n := copy(w.srcBlk.Data(), src)
 			nConsumed += n
@@ -122,8 +124,7 @@ func (w *syncWriterT) _write(src []byte) (nConsumed int, err error) {
 // Close finishes
 func (w *syncWriterT) Close() error {
 
-	// If s.srcBlk is nil, close has already been called
-	if w.srcBlk == nil {
+	if w.closed {
 		return w.state
 	}
 
@@ -142,6 +143,9 @@ func (w *syncWriterT) Close() error {
 	blk.ReturnBlk(w.srcBlk)
 	w.srcBlk = nil
 	w.srcOff = 0
+
+	// Flag that we are closed
+	w.closed = true
 
 	switch {
 	case w.state != nil:
@@ -190,6 +194,8 @@ func (w *syncWriterT) _flush() error {
 		return err
 	}
 
+	blk.ReturnBlk(w.srcBlk)
+	w.srcBlk = nil
 	w.srcOff = 0
 	return nil
 }
@@ -211,6 +217,12 @@ func (w *syncWriterT) _readFrom(r io.Reader) (nConsumed int64, err error) {
 		if err = w._writeHeader(); err != nil {
 			return
 		}
+	}
+
+	if w.srcBlk == nil {
+		w.srcBlk = blk.BorrowBlk(w.bsz)
+		w.srcBlk.Trim(w.bsz)
+		w.srcOff = 0 // Should be NOOP
 	}
 
 LOOP:
