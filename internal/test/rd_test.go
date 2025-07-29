@@ -1323,6 +1323,48 @@ func TestReadOffsetBadSeek(t *testing.T) {
 	}
 }
 
+// Force a read on exactly the last block.
+// Reader should not return a 0, nil read.
+// (Previous versions of the reader could return a (0, nil)
+// on the last block, which is undesirable behavior.
+// See https://pkg.go.dev/io#Reader)
+func TestReadEmptyEnd(t *testing.T) {
+	defer testBorrowed(t)
+
+	sample, _ := LoadSample(t, Lz4_4MB)
+
+	// First read completely to see how much data we have
+	rd := plz4.NewReader(bytes.NewReader(sample))
+	defer rd.Close()
+	data, err := io.ReadAll(rd)
+	if err != nil {
+		t.Fatalf("Unexpected read error  %v", err)
+	}
+	sz := len(data)
+
+	nrd := plz4.NewReader(bytes.NewReader(sample))
+	// Read exactly the size
+	if n, err := io.ReadFull(nrd, data); err != nil {
+		t.Fatalf("Unexpected read error  %v", err)
+	} else if n != sz {
+		t.Errorf("Expected read size %d, got %d", sz, n)
+	}
+
+	// Now read one more block, which should return an io.EOF.
+	n, err := nrd.Read(data)
+	if err != io.EOF {
+		t.Fatalf("Expected EOF on read, got %v", err)
+	}
+
+	if n != 0 {
+		t.Errorf("Expected read size 0, got %d", n)
+	}
+
+	if err := nrd.Close(); err != nil {
+		t.Errorf("Expected nil error on close: %v", err)
+	}
+}
+
 // Validate parse and callback on dictId.
 func TestReadDictId(t *testing.T) {
 	maybeSkip(t)
