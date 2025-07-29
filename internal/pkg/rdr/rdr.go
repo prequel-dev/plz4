@@ -41,6 +41,7 @@ func (r *Reader) Read(dst []byte) (int, error) {
 		return 0, r.state
 	}
 
+LOOP:
 	var (
 		err   error
 		nRead int
@@ -61,6 +62,12 @@ func (r *Reader) Read(dst []byte) (int, error) {
 		err = r.handleEndMark()
 		// Set state to returned error, if there is one.
 		r.state = err
+
+		// Avoid returning (0,nil) on end of frame. See https://pkg.go.dev/io#Reader
+		if err == nil && nRead == 0 && len(dst) > 0 {
+			goto LOOP
+		}
+
 	case nRead > 0 && r.inBodyMode():
 		// In the case that we received *SOME* data during a body read,
 		// return the nRead count and set the return value to 'nil'.
