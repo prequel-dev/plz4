@@ -107,13 +107,18 @@ func _decompress(rdwr *targetT, opts ...plz4.OptT) error {
 
 		percent := float64(rcnt.cnt) / float64(n) * 100.0
 
+		input := strStdin
+		if rdwr.src != nil {
+			input = rdwr.src.Name()
+		}
+
 		t := table.NewWriter()
 		t.SetTitle("Decompress results")
 		t.SetStyle(table.StyleColoredBright)
 		t.SetOutputMirror(os.Stdout)
 		t.AppendHeader(table.Row{"Key", "Value"})
 		t.AppendRows([]table.Row{
-			{"Input", rdwr.src.Name()},
+			{"Input", input},
 			{"Output", rdwr.dst.Name()},
 			{"InSize", rcnt.cnt},
 			{"OutSize", n},
