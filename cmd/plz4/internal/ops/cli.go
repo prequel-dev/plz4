@@ -25,13 +25,14 @@ var CLI struct {
 		Skip bool   `help:"Skip decompress" short:"s"`
 	} `cmd:"" aliases:"v,ver" help:"Verify lz4 data"`
 	Bakeoff struct {
-		File string `optional:"" arg:"" type:"existingfile"`
-		BS   string `help:"Block size [4MB, 1MB, 256KB, 64KB]" default:"4MB"`
-		BD   bool   `help:"Enable linked blocks"`
-		BX   bool   `help:"Enable block checksum"`
-		CX   bool   `help:"Enable content checksum"`
-		CS   bool   `help:"Enable content size; fails on stdin"`
-		RAM  bool   `help:"Process data in RAM"`
+		File      string `optional:"" arg:"" type:"existingfile"`
+		BS        string `help:"Block size [4MB, 1MB, 256KB, 64KB]" default:"4MB"`
+		BD        bool   `help:"Enable linked blocks"`
+		BX        bool   `help:"Enable block checksum"`
+		CX        bool   `help:"Enable content checksum"`
+		CS        bool   `help:"Enable content size; fails on stdin"`
+		RAM       bool   `help:"Process data in RAM"`
+		BlockMode bool   `help:"Use block API instead of frame API" short:"B"`
 	} `cmd:"" aliases:"b,bake" help:"Compare performance to github.com/pierrec/lz4"`
 
 	Cpus int    `help:"Concurrency [0 synchronous] [-1 auto]" default:"-1" short:"c"`

@@ -24,6 +24,10 @@ func byteSliceToCharPointer(b []byte) *C.char {
 	return (*C.char)(unsafe.Pointer(&b[0]))
 }
 
+func CompressBound(sz int) int {
+	return int(C.LZ4_compressBound(C.int(sz)))
+}
+
 func CompressFast(source, dest []byte, acceleration int) (int, error) {
 	ret := int(C.LZ4_compress_fast(
 		byteSliceToCharPointer(source),

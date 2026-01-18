@@ -26,7 +26,7 @@ This project attempts to support all of the features enumerated in the [LZ4 Fram
 - [Sparse](./pkg/sparse) write support
 - Random read access (see [caveats](#random-read-access))
 
-
+While the primary purpose of plz4 is to support parallel processing, the raw block APIs have also been supported for cases where the payloads are very small and do not benefit from LZ4 Framing.
 
 ## Design
 
@@ -56,6 +56,11 @@ There is another LZ4 Frame feature that is problematic at scale.  By default, pl
 ### Random read access
 
 Another advantage of independent blocks is the potential to support random read access.  This is possible because each block can be independently decompressed.  To support this, plz4 provides an optional progress callback that emits both the source offset and corresponding block offset during compression.  An implementation can use this information to build lookup tables that can later be used to skip ahead during decompression to a known block offset.  plz4 provides the 'WithReadOffset' option on the NewReader API to skip ahead and start decompression at a known block offset.
+
+### CGO
+
+
+This package uses CGO to call the canonical LZ4 library which is written in C.  There may be cases where CGO is not desired, and in those cases the package also supports building with the environment variable "CGO_ENABLED=0".  In general, the library runs a bit slower in that mode and not all features are available.
 
 
 ## Install

@@ -68,10 +68,14 @@ func (f CompressorFactory) newIndie() Compressor {
 }
 
 func (f CompressorFactory) newLinked() Compressor {
-	switch {
-	case f.level == 1:
+	switch f.level {
+	case 1:
 		return newLinkedCompressor(f.dictCtx)
 	default:
 		return newLinkedCompressorHC(f.level, f.dictCtxHC)
 	}
+}
+
+func CompressBound(sz int) int {
+	return clz4.CompressBound(sz)
 }

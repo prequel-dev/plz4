@@ -47,11 +47,10 @@ func (f CompressorFactory) NewCompressor() Compressor {
 }
 
 type fastCompressor struct {
-	cmp lz4.Compressor
 }
 
 func (c *fastCompressor) Compress(src, dst, dict []byte) (int, error) {
-	return c.cmp.CompressBlock(src, dst)
+	return lz4.CompressBlock(src, dst, nil)
 }
 
 func NewCompressorHC(level int) Compressor {
@@ -59,18 +58,16 @@ func NewCompressorHC(level int) Compressor {
 		level = 9
 	}
 	return &hcCompressor{
-		cmp: lz4.CompressorHC{
-			Level: lz4Level(level),
-		},
+		level: lz4Level(level),
 	}
 }
 
 type hcCompressor struct {
-	cmp lz4.CompressorHC
+	level lz4.CompressionLevel
 }
 
 func (c *hcCompressor) Compress(src, dst, dict []byte) (int, error) {
-	return c.cmp.CompressBlock(src, dst)
+	return lz4.CompressBlockHC(src, dst, c.level, nil, nil)
 }
 
 type failedCompressor struct {
@@ -109,4 +106,8 @@ func lz4Level(l int) lz4.CompressionLevel {
 		panic("fail map lz4 compression level")
 	}
 	return lz4Level
+}
+
+func CompressBound(sz int) int {
+	return lz4.CompressBlockBound(sz)
 }
