@@ -31,7 +31,7 @@ func RunBakeoff() error {
 	)
 
 	// Consume into RAM; must be able to seek
-	if rdr == os.Stdin {
+	if rdr == os.Stdin || CLI.Bakeoff.RAM {
 		var buf bytes.Buffer
 		n, err := io.Copy(&buf, rdr)
 		if err != nil {
@@ -125,16 +125,22 @@ func outputOptions() error {
 		dict = CLI.Dict
 	}
 
-	t.AppendRows([]table.Row{
-		{"File name", fn},
-		{"Dictionary", dict},
-		{"Concurrency", CLI.Cpus},
-		{"Block Size", CLI.Bakeoff.BS},
-		{"Block Checksum", CLI.Bakeoff.BX},
-		{"Blocks Linked", CLI.Bakeoff.BD},
-		{"Content Checksum", CLI.Bakeoff.CS},
-		{"Content Size", CLI.Bakeoff.CX},
-	})
+	if CLI.Bakeoff.BlockMode {
+		t.AppendRows([]table.Row{
+			{"File name", fn},
+		})
+	} else {
+		t.AppendRows([]table.Row{
+			{"File name", fn},
+			{"Dictionary", dict},
+			{"Concurrency", CLI.Cpus},
+			{"Block Size", CLI.Bakeoff.BS},
+			{"Block Checksum", CLI.Bakeoff.BX},
+			{"Blocks Linked", CLI.Bakeoff.BD},
+			{"Content Checksum", CLI.Bakeoff.CX},
+			{"Content Size", CLI.Bakeoff.CS},
+		})
+	}
 
 	t.Render()
 	return nil
@@ -143,8 +149,13 @@ func outputOptions() error {
 func outputResults(srcSz int64, plz4Results, lz4Results []resultT) error {
 	fmt.Println()
 
+	mode := "frame mode"
+	if CLI.Bakeoff.BlockMode {
+		mode = "block mode"
+	}
+
 	t := table.NewWriter()
-	t.SetTitle("Bakeoff Results")
+	t.SetTitle(fmt.Sprintf("Bakeoff Results [%s]", mode))
 	t.SetStyle(table.StyleColoredBright)
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"Algo", "Level", "SrcSize", "Compressed", "Ratio", "Compress", "Decompress"})
@@ -208,6 +219,18 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 
 	opts = append(opts, lz4.OnBlockDoneOption(cbHandler))
 
+	var srcBlock []byte
+	if CLI.Bakeoff.BlockMode {
+		srcBlock, err = io.ReadAll(rd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := rd.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+
+	}
+
 	bakeFunc := func() ([]resultT, error) {
 		defer tr.MarkAsDone()
 
@@ -216,19 +239,33 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 		for ; i < 10; i++ {
 			start := time.Now()
 
-			if _, err := rd.Seek(0, io.SeekStart); err != nil {
-				return nil, err
-			}
+			var (
+				split time.Time
+				cnt   int64
+				err   error
+			)
 
-			// Last one wins; so append is ok.
 			lvl, err := lz4Level(i)
 			if err != nil {
 				return nil, err
 			}
 
-			opts = append(opts, lz4.CompressionLevelOption(lvl))
+			if srcBlock != nil {
+				// Block mode
+				split, cnt, err = lz4BakeOneBlock(srcBlock, lvl)
 
-			split, cnt, err := lz4BakeOne(rd, opts...)
+			} else {
+
+				if _, err := rd.Seek(0, io.SeekStart); err != nil {
+					return nil, err
+				}
+
+				// Last one wins; so append is ok.
+				opts = append(opts, lz4.CompressionLevelOption(lvl))
+
+				split, cnt, err = lz4BakeOne(rd, opts...)
+			}
+
 			if err != nil {
 				return nil, err
 			}
@@ -335,21 +372,44 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 			plz4.WithWorkerPool(wp),
 		)
 
+		var srcBlock []byte
+		if CLI.Bakeoff.BlockMode {
+			srcBlock, err = io.ReadAll(rd)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := rd.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+		}
+
 		var results []resultT
 
 		for ; i < 12; i++ {
 			start := time.Now()
 
-			if _, err := rd.Seek(0, io.SeekStart); err != nil {
-				return nil, err
-			}
-
-			// Last one wins; so append is ok.
-			opts = append(opts,
-				plz4.WithLevel(plz4.LevelT(i+1)),
+			var (
+				split time.Time
+				cnt   int64
+				err   error
 			)
 
-			split, cnt, err := plz4BakeOne(rd, opts...)
+			if srcBlock != nil {
+				// Block mode
+				split, cnt, err = plz4BakeOneBlock(srcBlock, plz4.LevelT(i+1))
+
+			} else {
+				// Last one wins; so append is ok.
+
+				if _, err := rd.Seek(0, io.SeekStart); err != nil {
+					return nil, err
+				}
+
+				opts = append(opts,
+					plz4.WithLevel(plz4.LevelT(i+1)),
+				)
+				split, cnt, err = plz4BakeOne(rd, opts...)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -373,6 +433,7 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 }
 
 func plz4BakeOne(src io.Reader, opts ...plz4.OptT) (split time.Time, cnt int64, err error) {
+
 	var (
 		fh *os.File
 		wr io.Writer
@@ -443,6 +504,46 @@ func _plz4Decompress(rd io.Reader) error {
 	}
 
 	return err
+}
+
+func lz4BakeOneBlock(src []byte, level lz4.CompressionLevel) (split time.Time, cnt int64, err error) {
+
+	var (
+		sz  = lz4.CompressBlockBound(len(src))
+		dst = make([]byte, sz)
+		n   int
+	)
+
+	if level == lz4.Fast {
+		n, err = lz4.CompressBlock(src, dst, nil)
+	} else {
+		n, err = lz4.CompressBlockHC(src, dst, level, nil, nil)
+	}
+	if err != nil {
+		return
+	}
+
+	dst = dst[:n]
+	split = time.Now()
+	cnt = int64(n)
+
+	tmp := make([]byte, len(src))
+
+	_, err = lz4.UncompressBlock(dst, tmp)
+	return
+}
+
+func plz4BakeOneBlock(src []byte, level plz4.LevelT) (split time.Time, cnt int64, err error) {
+
+	dst, err := plz4.CompressBlock(src, plz4.WithBlockCompressionLevel(level))
+	if err != nil {
+		return
+	}
+
+	split = time.Now()
+	_, err = plz4.DecompressBlock(dst)
+	cnt = int64(len(dst))
+	return
 }
 
 func _lz4Decompress(rd io.Reader) error {
