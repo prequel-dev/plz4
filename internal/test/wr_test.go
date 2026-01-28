@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gammazero/workerpool"
 	"github.com/prequel-dev/plz4"
 	"github.com/prequel-dev/plz4/internal/pkg/blk"
+	"github.com/prequel-dev/plz4/internal/pkg/wpool"
 )
 
 var cgoEnabled = true
@@ -467,7 +467,7 @@ func _testLz4WriterWorkerPool(t *testing.T, N, poolSz int) {
 	// Create N requests attached to worker pool, they should all finish.
 	var (
 		wg      sync.WaitGroup
-		wp      = workerpool.New(poolSz)
+		wp      = wpool.NewWorkerPool(wpool.WithMaxWorkers(poolSz))
 		lsrc, _ = LoadSample(t, LargeUncompressed)
 	)
 	wg.Add(N)
