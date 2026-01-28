@@ -8,6 +8,9 @@ import (
 
 	"github.com/pierrec/lz4/v4"
 	"github.com/prequel-dev/plz4"
+	"github.com/prequel-dev/plz4/internal/pkg/blk"
+	"github.com/prequel-dev/plz4/internal/pkg/descriptor"
+	"github.com/prequel-dev/plz4/internal/pkg/opts"
 )
 
 // Basic round-trip tests for CompressBlock/DecompressBlock.
@@ -387,13 +390,115 @@ func BenchmarkCompressBlockWithLevel(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				dst, err := plz4.CompressBlock(src, plz4.WithBlockCompressionLevel(lvl), plz4.WithBlockDst(dst))
+				_, err := plz4.CompressBlock(src, plz4.WithBlockCompressionLevel(lvl), plz4.WithBlockDst(dst))
 				if err != nil {
 					b.Fatalf("CompressBlock(level=%d) failed: %v", lvl, err)
 				}
 
-				b.ReportMetric(float64(len(dst))/float64(len(src))*100.0, "ratio")
 			}
+
+			//	b.ReportMetric(float64(len(dst))/float64(len(src))*100.0, "ratio")
+		})
+	}
+}
+
+// BenchmarkCompressBlockWithLevel focuses on how compression level
+// affects performance for a fixed moderately sized input.
+func BenchmarkCompressBlockWithLevel2(b *testing.B) {
+	src, _ := LoadSample(b, LargeUncompressed)
+
+	var (
+		dst    = make([]byte, plz4.CompressBlockBound(len(src)))
+		levels = []plz4.LevelT{plz4.Level1, plz4.Level3, plz4.Level6, plz4.Level9}
+	)
+
+	for _, lvl := range levels {
+		lvl := lvl
+		b.Run(fmt.Sprintf("level_%d", lvl), func(b *testing.B) {
+			b.SetBytes(int64(len(src)))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				_, err := plz4.CompressBlock(src, plz4.WithBlockCompressionLevel(lvl), plz4.WithBlockDst(dst))
+				if err != nil {
+					b.Fatalf("CompressBlock(level=%d) failed: %v", lvl, err)
+				}
+
+			}
+
+			//	b.ReportMetric(float64(len(dst))/float64(len(src))*100.0, "ratio")
+		})
+	}
+}
+
+func BenchmarkCompressBlockWithLevelLz4(b *testing.B) {
+	src, _ := LoadSample(b, LargeUncompressed)
+
+	var (
+		dst    = make([]byte, lz4.CompressBlockBound(len(src)))
+		levels = []lz4.CompressionLevel{lz4.Fast, lz4.Level3, lz4.Level6, lz4.Level9}
+	)
+
+	for _, lvl := range levels {
+		lvl := lvl
+		b.Run(fmt.Sprintf("level_%d", lvl), func(b *testing.B) {
+			b.SetBytes(int64(len(src)))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				var err error
+				if lvl == lz4.Fast {
+					_, err = lz4.CompressBlock(src, dst, nil)
+				} else {
+					_, err = lz4.CompressBlockHC(src, dst, lvl, nil, nil)
+				}
+
+				if err != nil {
+					b.Fatalf("CompressBlock(level=%d) failed: %v", lvl, err)
+				}
+
+			}
+
+			//	b.ReportMetric(float64(len(dst))/float64(len(src))*100.0, "ratio")
+		})
+	}
+}
+
+func BenchmarkCompressBlockWithLevelock(b *testing.B) {
+	src, _ := LoadSample(b, LargeUncompressed)
+
+	var (
+		levels = []plz4.LevelT{plz4.Level1, plz4.Level3, plz4.Level6, plz4.Level9}
+	)
+
+	for _, lvl := range levels {
+		lvl := lvl
+		b.Run(fmt.Sprintf("level_%d", lvl), func(b *testing.B) {
+
+			opts := opts.OptsT{
+				Level:        lvl,
+				BlockSizeIdx: plz4.BlockIdx4MB,
+			}
+
+			cf := opts.NewCompressorFactory()
+			cmp := cf.NewCompressor()
+
+			b.SetBytes(int64(len(src)))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				dstBlk, err := blk.CompressToBlk(src, cmp, descriptor.BlockIdx4MBSz, false, nil)
+				if err != nil {
+					b.Fatalf("CompressBlock(level=%d) failed: %v", lvl, err)
+				}
+				blk.ReturnBlk(dstBlk)
+
+			}
+
+			//	b.ReportMetric(float64(len(dst))/float64(len(src))*100.0, "ratio")
 		})
 	}
 }
