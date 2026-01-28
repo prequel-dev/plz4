@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/pierrec/lz4/v4"
 	"github.com/prequel-dev/plz4"
 )
 
@@ -171,7 +172,7 @@ func benchmarkWrite(b *testing.B, sz int, opts ...Option) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sz := discardWrite(b, lsrc, opts...)
+		sz := discardWrite(b, lsrc, false, opts...)
 		b.ReportMetric(float64(sz)/float64(len(lsrc))*100.0, "ratio")
 	}
 }
@@ -212,5 +213,135 @@ func benchmarkReadFromWithSrc(b *testing.B, src []byte, opts ...Option) {
 		rd.Reset(src)
 		sz := discardReadFrom(b, rd, opts...)
 		b.ReportMetric(float64(sz)/float64(len(src))*100.0, "ratio")
+	}
+}
+
+func BenchmarkCompressVersusLz4AsyncSmall(b *testing.B) {
+
+	sample, _ := LoadSample(b, Monster)
+	src := sample[:4<<10]
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.Run("lz4", func(b *testing.B) {
+		for b.Loop() {
+			benchLz4Compress(b, src, lz4.ConcurrencyOption(8))
+		}
+	})
+
+	b.Run("plz4", func(b *testing.B) {
+		for b.Loop() {
+			benchPlz4Compress(b, src, plz4.WithParallel(8))
+		}
+	})
+}
+
+func BenchmarkCompressVersusLz4SyncSmall(b *testing.B) {
+
+	sample, _ := LoadSample(b, Monster)
+	src := sample[:4<<10]
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.Run("lz4", func(b *testing.B) {
+		for b.Loop() {
+			benchLz4Compress(b, src, lz4.ConcurrencyOption(1))
+		}
+	})
+
+	b.Run("plz4", func(b *testing.B) {
+		for b.Loop() {
+			benchPlz4Compress(b, src, plz4.WithParallel(0))
+		}
+	})
+}
+
+func BenchmarkCompressVersusLz4AsyncMedium(b *testing.B) {
+
+	sample, _ := LoadSample(b, Monster)
+	src := sample[:12<<20]
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.Run("lz4", func(b *testing.B) {
+		for b.Loop() {
+			benchLz4Compress(b, src, lz4.ConcurrencyOption(8))
+		}
+	})
+
+	b.Run("plz4", func(b *testing.B) {
+		for b.Loop() {
+			benchPlz4Compress(b, src, plz4.WithParallel(8))
+		}
+	})
+}
+
+func BenchmarkCompressVersusLz4SyncLarge(b *testing.B) {
+
+	src, _ := LoadSample(b, Monster)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.Run("lz4", func(b *testing.B) {
+		for b.Loop() {
+			benchLz4Compress(b, src, lz4.ConcurrencyOption(1))
+		}
+	})
+
+	b.Run("plz4", func(b *testing.B) {
+		for b.Loop() {
+			benchPlz4Compress(b, src, plz4.WithParallel(0))
+		}
+	})
+}
+
+func BenchmarkCompressVersusLz4AsyncLarge(b *testing.B) {
+
+	src, _ := LoadSample(b, Monster)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.Run("lz4", func(b *testing.B) {
+		for b.Loop() {
+			benchLz4Compress(b, src, lz4.ConcurrencyOption(-1))
+		}
+	})
+
+	b.Run("plz4", func(b *testing.B) {
+		for b.Loop() {
+			benchPlz4Compress(b, src, plz4.WithParallel(-1))
+		}
+	})
+}
+
+func benchLz4Compress(b *testing.B, src []byte, opts ...lz4.Option) {
+	wr := lz4.NewWriter(io.Discard)
+	if err := wr.Apply(opts...); err != nil {
+		b.Fatalf("plz4 apply error: %v", err)
+	}
+	_, err := wr.Write(src)
+	if err != nil {
+		b.Fatalf("plz4 write error: %v", err)
+	}
+	if err := wr.Close(); err != nil {
+		b.Fatalf("plz4 close error: %v", err)
+	}
+}
+
+func benchPlz4Compress(b *testing.B, src []byte, opts ...plz4.OptT) {
+	wr := plz4.NewWriter(
+		io.Discard,
+		opts...,
+	)
+	_, err := wr.Write(src)
+	if err != nil {
+		b.Fatalf("plz4 write error: %v", err)
+	}
+	if err := wr.Close(); err != nil {
+		b.Fatalf("plz4 close error: %v", err)
 	}
 }

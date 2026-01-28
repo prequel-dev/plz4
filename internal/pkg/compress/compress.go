@@ -5,6 +5,10 @@ package compress
 import "github.com/prequel-dev/plz4/internal/pkg/clz4"
 
 type Compressor interface {
+	// 'src' is the source data to compress
+	// 'dst' is the destination buffer to write compressed data into
+	// 'dict' is an optional dictionary (may be nil)
+	// Returns number of bytes written to 'dst' and error if any
 	Compress(src, dst, dict []byte) (int, error)
 }
 

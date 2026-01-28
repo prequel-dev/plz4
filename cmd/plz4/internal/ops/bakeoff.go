@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
+	"slices"
 	"time"
 
-	"github.com/gammazero/workerpool"
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/pierrec/lz4/v4"
@@ -188,13 +187,11 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 		return nil, err
 	}
 
-	var (
-		i = 0
-	)
+	const nLevels = 10
 
 	tr := &progress.Tracker{
 		Message: "Processing lz4",
-		Total:   srcSz * 10,
+		Total:   srcSz * nLevels,
 		Units:   progress.UnitsBytes,
 	}
 
@@ -236,7 +233,7 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 
 		var results []resultT
 
-		for ; i < 10; i++ {
+		for i := range nLevels {
 			start := time.Now()
 
 			var (
@@ -245,7 +242,8 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 				err   error
 			)
 
-			lvl, err := lz4Level(i)
+			// Run backwards so that the cache penalty is less for faster levels.
+			lvl, err := lz4Level(nLevels - i - 1) // [0,nLevels-1]
 			if err != nil {
 				return nil, err
 			}
@@ -260,10 +258,9 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 					return nil, err
 				}
 
-				// Last one wins; so append is ok.
-				opts = append(opts, lz4.CompressionLevelOption(lvl))
+				nopts := append(opts, lz4.CompressionLevelOption(lvl))
 
-				split, cnt, err = lz4BakeOne(rd, opts...)
+				split, cnt, err = lz4BakeOne(rd, nopts...)
 			}
 
 			if err != nil {
@@ -282,6 +279,7 @@ func _prepLz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, err
 			})
 		}
 
+		slices.Reverse(results)
 		return results, nil
 	}
 
@@ -347,9 +345,11 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 		return nil, err
 	}
 
+	const nLevels = 12
+
 	tr := &progress.Tracker{
 		Message: "Processing plz4",
-		Total:   srcSz * 12,
+		Total:   srcSz * nLevels,
 		Units:   progress.UnitsBytes,
 	}
 
@@ -364,12 +364,9 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 			tr.SetValue(srcOff + (int64(i) * srcSz))
 		}
 
-		wp := workerpool.New(runtime.NumCPU())
-
 		opts = append(opts,
 			plz4.WithProgress(cbHandler),
 			plz4.WithPendingSize(-1),
-			plz4.WithWorkerPool(wp),
 		)
 
 		var srcBlock []byte
@@ -385,7 +382,7 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 
 		var results []resultT
 
-		for ; i < 12; i++ {
+		for ; i < nLevels; i++ {
 			start := time.Now()
 
 			var (
@@ -394,21 +391,22 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 				err   error
 			)
 
+			lvl := nLevels - i // [1,nLevels]
+
 			if srcBlock != nil {
 				// Block mode
-				split, cnt, err = plz4BakeOneBlock(srcBlock, plz4.LevelT(i+1))
+				split, cnt, err = plz4BakeOneBlock(srcBlock, plz4.LevelT(lvl))
 
 			} else {
-				// Last one wins; so append is ok.
-
 				if _, err := rd.Seek(0, io.SeekStart); err != nil {
 					return nil, err
 				}
 
-				opts = append(opts,
-					plz4.WithLevel(plz4.LevelT(i+1)),
+				// Run backwards so that the cache penalty is less for faster levels.
+				nopts := append(opts,
+					plz4.WithLevel(plz4.LevelT(lvl)),
 				)
-				split, cnt, err = plz4BakeOne(rd, opts...)
+				split, cnt, err = plz4BakeOne(rd, nopts...)
 			}
 			if err != nil {
 				return nil, err
@@ -426,6 +424,7 @@ func _prepPlz4(rd io.ReadSeeker, srcSz int64, pw progress.Writer) (bakeFuncT, er
 			})
 		}
 
+		slices.Reverse(results)
 		return results, nil
 	}
 

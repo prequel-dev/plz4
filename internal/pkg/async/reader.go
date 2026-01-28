@@ -87,15 +87,15 @@ func NewAsyncReader(rdr io.Reader, hdr header.HeaderT, opts *opts.OptsT) *asyncR
 	// Otherwise could dead lock on too many simultaneous request
 	go r.dispatch()
 
-	// Each closure escapes and causes an allocate.
-	// No reason to do that NParallel times
-	task := func() {
-		r.decompress()
+	nTasks := opts.NParallel
+	if hdr.Flags.ContentSize() && hdr.ContentSz > 0 {
+		// If content size known, can limit number of tasks
+		nTasks = min(opts.NParallel, int(hdr.ContentSz)/bsz+1)
 	}
 
-	r.wg.Add(opts.NParallel)
-	for i := 0; i < opts.NParallel; i++ {
-		opts.WorkerPool.Submit(task)
+	r.wg.Add(nTasks)
+	for range nTasks {
+		opts.WorkerPool.Submit(r.decompress)
 	}
 
 	return r
@@ -223,8 +223,8 @@ LOOP:
 func (r *asyncRdrT) NextBlock(prevBlk *blk.BlkT) (*blk.BlkT, int, error) {
 
 	if prevBlk != nil {
-		switch {
-		case r.hasher == nil:
+		switch r.hasher {
+		case nil:
 			blk.ReturnBlk(prevBlk)
 		default:
 			r.hasher.Queue(prevBlk)
