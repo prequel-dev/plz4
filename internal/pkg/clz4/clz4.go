@@ -2,7 +2,7 @@
 
 package clz4
 
-// #cgo CFLAGS: -O3
+// #cgo CFLAGS: -O3 -flto
 // #include "lz4.h"
 // #include "lz4hc.h"
 import "C"

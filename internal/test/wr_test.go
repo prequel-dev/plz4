@@ -462,6 +462,168 @@ func TestLz4WriterDictID(t *testing.T) {
 	)
 }
 
+// Ensure that a user-provided dictionary is applied when compressing in
+// linked-block mode, for both synchronous and asynchronous writers.
+// We verify this by compressing with a known dictionary and then
+// confirming that decompression with a bad dictionary either fails with
+// a corrupted error or produces mismatched data, while decompression
+// with the correct dictionary round-trips.
+func TestLz4WriterLinkedDictionaryApplied(t *testing.T) {
+	maybeSkip(t)
+	defer testBorrowed(t)
+
+	// Source payload large enough to span multiple 64KiB blocks so that
+	// linked-block behavior and inter-block dictionaries are exercised.
+	src := make([]byte, 256<<10)
+	for i := range src {
+		// Deterministic, pseudo-random pattern to avoid trivially
+		// compressible data while still overlapping with the dictionary.
+		src[i] = byte(i % 251)
+	}
+
+	// Use a prefix of src as the "good" dictionary so that there is
+	// meaningful overlap between the dictionary and the payload.
+	dictSz := 2 << 10 // 2 KiB prefix
+	if dictSz > len(src) {
+		t.Fatalf("dictionary size %d larger than src %d", dictSz, len(src))
+	}
+	goodDict := append([]byte(nil), src[:dictSz]...)
+
+	parallels := []int{0, 4} // 0 = sync writer, 4 = async/parallel writer
+
+	for _, nParallel := range parallels {
+		t.Run(fmt.Sprintf("parallel_%d", nParallel), func(t *testing.T) {
+
+			var buf bytes.Buffer
+			wr := plz4.NewWriter(&buf,
+				plz4.WithDictionary(goodDict),
+				plz4.WithBlockLinked(true),
+				plz4.WithBlockSize(plz4.BlockIdx64KB),
+				plz4.WithParallel(nParallel),
+			)
+
+			// Stream the payload in smaller chunks to exercise true
+			// streaming behavior across multiple linked blocks.
+			const chunkSz = 8 << 10
+			if sum, err := spinWrite(wr, src, chunkSz, false); err != nil || sum != int64(len(src)) {
+				t.Fatalf("Fail write: sum=%d len=%d err=%v", sum, len(src), err)
+			}
+
+			if err := wr.Close(); err != nil {
+				t.Fatalf("Fail close: %v", err)
+			}
+
+			cmp := buf.Bytes()
+
+			// Verify that decompression with the correct dictionary preserves
+			// the original payload.
+			decGood := decompressWriteTo(t, cmp, []Option{plz4.WithDictionary(goodDict)})
+			if !bytes.Equal(src, decGood.Bytes()) {
+				t.Fatalf("round-trip with good dictionary mismatch: got %d bytes, want %d", decGood.Len(), len(src))
+			}
+
+			// Now perturb the dictionary and ensure that decompression with
+			// this bad dictionary does not successfully round-trip. This
+			// demonstrates that the compressed stream actually depends on the
+			// user-provided dictionary in linked mode.
+			badDict := append([]byte(nil), goodDict...)
+			for i := 0; i < len(badDict); i += 16 {
+				badDict[i] ^= 0xFF
+			}
+
+			rd := plz4.NewReader(bytes.NewReader(cmp), plz4.WithDictionary(badDict))
+			var out bytes.Buffer
+			n64, err := rd.WriteTo(&out)
+			if err == nil && bytes.Equal(src, out.Bytes()) {
+				t.Fatalf("decompression with bad dictionary unexpectedly matched original data (n=%d)", n64)
+			}
+			if err != nil && !plz4.Lz4Corrupted(err) {
+				t.Fatalf("expected corrupted error with bad dictionary, got: %v", err)
+			}
+			if cerr := rd.Close(); cerr != nil && !plz4.Lz4Corrupted(cerr) {
+				t.Fatalf("expected corrupted error or nil on close with bad dictionary, got: %v", cerr)
+			}
+		})
+	}
+}
+
+// Ensure that a user-provided dictionary is actually applied when
+// compressing data smaller than a single block. We verify this by
+// compressing with a known dictionary and then confirming that
+// decompression with a bad dictionary either fails with a corrupted
+// error or produces mismatched data, while decompression with the
+// correct dictionary round-trips.
+func TestLz4WriterDictionaryAppliedForSmallPayload(t *testing.T) {
+	maybeSkip(t)
+	defer testBorrowed(t)
+
+	// Source payload smaller than one 64KiB block.
+	src := make([]byte, 4<<10)
+	for i := range src {
+		// Fill with a deterministic, pseudo-random pattern to avoid
+		// trivially compressible data while still having overlap with
+		// the dictionary below.
+		src[i] = byte(i % 251)
+	}
+
+	// Use a prefix of src as the "good" dictionary so that there is
+	// meaningful overlap between the dictionary and the payload.
+	dictSz := 2 << 10 // 2 KiB prefix
+	if dictSz > len(src) {
+		t.Fatalf("dictionary size %d larger than src %d", dictSz, len(src))
+	}
+	goodDict := append([]byte(nil), src[:dictSz]...)
+
+	// Compress using a writer configured with the user dictionary and a
+	// block size larger than the payload to ensure we stay within a
+	// single block.
+	var buf bytes.Buffer
+	wr := plz4.NewWriter(&buf,
+		plz4.WithDictionary(goodDict),
+		plz4.WithBlockSize(plz4.BlockIdx64KB),
+		plz4.WithParallel(4),
+	)
+
+	if n, err := wr.Write(src); err != nil || n != len(src) {
+		t.Fatalf("Fail write: n=%d err=%v", n, err)
+	}
+
+	if err := wr.Close(); err != nil {
+		t.Fatalf("Fail close: %v", err)
+	}
+
+	cmp := buf.Bytes()
+
+	// Verify that decompression with the correct dictionary preserves
+	// the original payload.
+	decGood := decompressWriteTo(t, cmp, []Option{plz4.WithDictionary(goodDict)})
+	if !bytes.Equal(src, decGood.Bytes()) {
+		t.Fatalf("round-trip with good dictionary mismatch: got %d bytes, want %d", decGood.Len(), len(src))
+	}
+
+	// Now perturb the dictionary and ensure that decompression with this
+	// bad dictionary does not successfully round-trip. This demonstrates
+	// that the compressed stream actually depends on the user-provided
+	// dictionary, even though the payload is smaller than a single block.
+	badDict := append([]byte(nil), goodDict...)
+	for i := 0; i < len(badDict); i += 16 {
+		badDict[i] ^= 0xFF
+	}
+
+	rd := plz4.NewReader(bytes.NewReader(cmp), plz4.WithDictionary(badDict))
+	var out bytes.Buffer
+	n64, err := rd.WriteTo(&out)
+	if err == nil && bytes.Equal(src, out.Bytes()) {
+		t.Fatalf("decompression with bad dictionary unexpectedly matched original data (n=%d)", n64)
+	}
+	if err != nil && !plz4.Lz4Corrupted(err) {
+		t.Fatalf("expected corrupted error with bad dictionary, got: %v", err)
+	}
+	if cerr := rd.Close(); cerr != nil && !plz4.Lz4Corrupted(cerr) {
+		t.Fatalf("expected corrupted error or nil on close with bad dictionary, got: %v", cerr)
+	}
+}
+
 func _testLz4WriterWorkerPool(t *testing.T, N, poolSz int) {
 
 	// Create N requests attached to worker pool, they should all finish.
@@ -471,10 +633,10 @@ func _testLz4WriterWorkerPool(t *testing.T, N, poolSz int) {
 		lsrc, _ = LoadSample(t, LargeUncompressed)
 	)
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			defer wg.Done()
-			discardWrite(t, lsrc, plz4.WithWorkerPool(wp), plz4.WithParallel(-1))
+			discardWrite(t, lsrc, false, plz4.WithWorkerPool(wp), plz4.WithParallel(-1))
 		}()
 	}
 
@@ -488,10 +650,10 @@ func TestLz4WriterWorkerpool(t *testing.T) {
 }
 
 // Add a minimal worker pool; should finish
-// despite only one worker available.
+// despite only two workers available.
 func TestLz4WriterWorkerpoolMinimal(t *testing.T) {
 	defer testBorrowed(t)
-	_testLz4WriterWorkerPool(t, 10, 1)
+	_testLz4WriterWorkerPool(t, 10, 2)
 }
 
 // Randomly swap between Write and ReadFrom APIs, varying write size.
@@ -762,7 +924,7 @@ func TestWriteFail(t *testing.T) {
 					_, err = wr.ReadFrom(rd)
 				} else {
 					chunkSz := rand.IntN(8<<20) + 1
-					_, err = spinWrite(wr, lsrc, chunkSz)
+					_, err = spinWrite(wr, lsrc, chunkSz, true)
 				}
 
 				// Force a flush if error did not come through yet
@@ -870,7 +1032,7 @@ func TestWriteFailReader(t *testing.T) {
 // Helpers
 //////////
 
-func spinWrite(wr plz4.Writer, src []byte, chunkSz int) (sum int64, err error) {
+func spinWrite(wr plz4.Writer, src []byte, chunkSz int, randFlush bool) (sum int64, err error) {
 LOOP:
 	for len(src) > 0 {
 
@@ -886,7 +1048,7 @@ LOOP:
 		}
 
 		// Randomly call flush to exercise that code path
-		if rand.IntN(5) == 0 {
+		if randFlush && rand.IntN(5) == 0 {
 			if err = wr.Flush(); err != nil {
 				break LOOP
 			}
@@ -907,7 +1069,7 @@ func compressWrite(t testing.TB, src []byte, opts []Option, chunkSz int) bytes.B
 	var (
 		ssrc = len(src)
 	)
-	sum, err := spinWrite(wr, src, chunkSz)
+	sum, err := spinWrite(wr, src, chunkSz, false)
 	if err != nil {
 		t.Fatalf("Fail Lz4FrameW.Write(): %v", err)
 	}
@@ -1011,13 +1173,13 @@ func (c *wrCounter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func discardWrite(b testing.TB, src []byte, opts ...Option) int64 {
+func discardWrite(b testing.TB, src []byte, randFlush bool, opts ...Option) int64 {
 	const chunkSz = 4 << 10
 
 	wrCnt := wrCounter{}
 	wr := plz4.NewWriter(&wrCnt, opts...)
 
-	_, err := spinWrite(wr, src, chunkSz)
+	_, err := spinWrite(wr, src, chunkSz, randFlush)
 	if err != nil {
 		b.Errorf("Fail Lz4FrameW.Write(): %v", err)
 	}

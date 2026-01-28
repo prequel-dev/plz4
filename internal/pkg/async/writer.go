@@ -10,6 +10,7 @@ import (
 	"github.com/prequel-dev/plz4/internal/pkg/header"
 	"github.com/prequel-dev/plz4/internal/pkg/opts"
 	"github.com/prequel-dev/plz4/internal/pkg/trailer"
+	"github.com/prequel-dev/plz4/internal/pkg/xxh32"
 	"github.com/prequel-dev/plz4/internal/pkg/zerr"
 )
 
@@ -29,6 +30,7 @@ func (f *stateFlagT) Set(flag stateFlagT) {
 }
 
 type asyncWriterT struct {
+	wr      io.Writer
 	bsz     int
 	srcIdx  int
 	srcOff  int
@@ -41,9 +43,7 @@ type asyncWriterT struct {
 	wg      sync.WaitGroup
 	opts    *opts.OptsT
 	hasher  *AsyncHashIdx
-	taskF   func()
 	cmpF    compress.CompressorFactory
-	nTasks  int
 	state   atomic.Pointer[error]
 	flags   stateFlagT
 }
@@ -51,57 +51,28 @@ type asyncWriterT struct {
 func NewAsyncWriter(wr io.Writer, opts *opts.OptsT) *asyncWriterT {
 
 	var (
-		bsz      = opts.BlockSizeIdx.Size()
-		cmpF     = opts.NewCompressorFactory()
-		nPending = opts.CalcPending()
+		bsz  = opts.BlockSizeIdx.Size()
+		cmpF = opts.NewCompressorFactory()
 	)
 
 	w := &asyncWriterT{
-		bsz:     bsz,
-		inChan:  make(chan inBlkT),
-		outChan: make(chan outBlkT),
-		synChan: make(chan int),
-		semChan: make(chan struct{}, nPending),
-		cmpF:    cmpF,
-		opts:    opts,
-		nTasks:  1,
+		wr:   wr,
+		bsz:  bsz,
+		cmpF: cmpF,
+		opts: opts,
 	}
 
-	// Spin up writer before compress tasks in
-	// case worker pool is defined that does not
-	// have enough slots.  Need at least
-	// 2 slots available (3 if opts.SrcChecksum)
-	// Note: control routine must be outside of workerpool.
-	// Otherwise could deadlock on too many simultaneous request
-	go w.writeLoop(wr)
+	// Defer spinning up async goroutines tasks until first buffer is flushed.
+	// This allows us to avoid unnecessary resource consumption
+	// in the case of very small payloads that fit within
+	// a single block.
 
-	if opts.ContentChecksum {
-		w.hasher = NewAsyncHashIdx(opts.NParallel)
-		go w.hasher.Run()
-	}
-
-	// Bind task function
-	// Each closure escapes and causes an allocate.
-	// No reason to do that NParallel times
-	w.taskF = func() {
-		w.compressLoop()
-	}
-
-	// Spin up at least one producer task; we will need at least one
-	// assuming there is a write at some point.
-	// Will spin up additional on demand; this conserves
-	// resources in auto parallel mode; particularly with small payloads.
-	// If we do happen to have content size, intialize based on size:
+	// However, if user set content size, we know how large the source
+	// data is and can launch the appropriate number of tasks up front.
 	if opts.ContentSz != nil {
-		w.nTasks = int(*opts.ContentSz)/bsz + 1
-		if w.nTasks > opts.NParallel {
-			w.nTasks = opts.NParallel
+		if nBuffers := int(*opts.ContentSz)/bsz + 1; nBuffers > 1 {
+			w.kickoffAsync()
 		}
-	}
-
-	w.wg.Add(w.nTasks)
-	for i := 0; i < w.nTasks; i++ {
-		opts.WorkerPool.Submit(w.taskF)
 	}
 
 	return w
@@ -125,7 +96,7 @@ func (w *asyncWriterT) Write(src []byte) (int, error) {
 
 		// Flush block if completely filled
 		if w.srcOff == w.bsz {
-			w._flushBlk()
+			w._flushBlk(false)
 		}
 
 		// Slide the src buffer over by N for next spin
@@ -143,7 +114,7 @@ func (w *asyncWriterT) Flush() error {
 	}
 
 	// Flush out pending data if any
-	w.flushBlk()
+	w.flushBlk(false)
 
 	// If no data has been queue, return.
 	if w.srcIdx == 0 {
@@ -167,26 +138,28 @@ func (w *asyncWriterT) Close() error {
 	}
 
 	// Flush any outstanding data
-	w.flushBlk()
+	w.flushBlk(true)
 
-	// Close down the semaphore.
-	// No long necessary after last flush.
-	close(w.semChan)
+	if w.semChan != nil {
+		// Close down the semaphore.
+		// No long necessary after last flush.
+		close(w.semChan)
 
-	// Close down the inChan.
-	// This will cause the producer goroutines to exit.
-	close(w.inChan)
+		// Close down the inChan.
+		// This will cause the producer goroutines to exit.
+		close(w.inChan)
 
-	// Wait for the producer go routines to cycle down;
-	// Not safe to close the w.outChan until all have exited.
-	w.wg.Wait()
+		// Wait for the producer go routines to cycle down;
+		// Not safe to close the w.outChan until all have exited.
+		w.wg.Wait()
 
-	// Close down the outChan. This is safe because
-	// all the producers have closed down via wg.Wait()
-	close(w.outChan)
+		// Close down the outChan. This is safe because
+		// all the producers have closed down via wg.Wait()
+		close(w.outChan)
 
-	// Wait for the writeLoop goroutine to exit
-	<-w.synChan
+		// Wait for the writeLoop goroutine to exit
+		<-w.synChan
+	}
 
 	// Return the srcBlk to the pool
 	blk.ReturnBlk(w.srcBlk)
@@ -236,7 +209,7 @@ LOOP:
 		switch rerr {
 		case nil:
 			// srcBlk was filled; flush the block to the out channel
-			w._flushBlk()
+			w._flushBlk(false)
 		case io.ErrUnexpectedEOF:
 			// Some bytes were read and add to w.srcBlk.
 			// Defer flush and spin loop again.
@@ -308,9 +281,10 @@ LOOP:
 	}
 }
 
-func (w *asyncWriterT) writeLoop(wr io.Writer) {
+func (w *asyncWriterT) writeLoop() {
 
 	var (
+		wr       = w.wr
 		nextIdx  = 0
 		flushIdx = -1
 		srcMark  = int64(0)
@@ -425,14 +399,14 @@ func (w *asyncWriterT) writeTrailer(wr io.Writer) (int, error) {
 	return trailer.WriteTrailerWithHash(wr, xxh)
 }
 
-func (w *asyncWriterT) flushBlk() {
+func (w *asyncWriterT) flushBlk(close bool) {
 	if w.srcOff == 0 {
 		return
 	}
 
 	// Clip w.srcBlk to whatever we are currently cached to
 	w.srcBlk.Trim(w.srcOff)
-	w._flushBlk()
+	w._flushBlk(close)
 }
 
 func (w *asyncWriterT) _genDict() (outDict *blk.BlkT) {
@@ -462,10 +436,52 @@ func (w *asyncWriterT) _genDict() (outDict *blk.BlkT) {
 	return
 }
 
-func (w *asyncWriterT) _flushBlk() {
+func (w *asyncWriterT) kickoffAsync() {
+
+	var (
+		nPending = w.opts.CalcPending()
+	)
+
+	w.inChan = make(chan inBlkT)
+	w.outChan = make(chan outBlkT)
+	w.synChan = make(chan int)
+	w.semChan = make(chan struct{}, nPending)
+
+	go w.writeLoop()
+
+	if w.opts.ContentChecksum {
+		w.hasher = NewAsyncHashIdx(w.opts.NParallel)
+		go w.hasher.Run()
+	}
+
+	// Fire the compressor tasks; limit if we know content size.
+	nTasks := w.opts.NParallel
+	if w.opts.ContentSz != nil {
+		nTasks = min(w.opts.NParallel, int(*w.opts.ContentSz)/w.bsz+1)
+	}
+
+	w.wg.Add(nTasks)
+	for range nTasks {
+		w.opts.WorkerPool.Submit(w.compressLoop)
+	}
+}
+
+func (w *asyncWriterT) _flushBlk(close bool) {
 	if w.srcBlk == nil || w.srcOff == 0 {
 		// Nothing to flush; return
 		return
+	}
+
+	switch {
+	case w.semChan != nil:
+		// Async already kicked; proceed
+	case close:
+		// Go close before flushing first block.
+		// Run synchronous write to avoid spinning up goroutines unnecessarily.
+		w.writeSync()
+		return
+	default:
+		w.kickoffAsync()
 	}
 
 	// Defer content hash to minimize pipeline blockage
@@ -483,17 +499,54 @@ func (w *asyncWriterT) _flushBlk() {
 		dict: w._genDict(),
 	}
 
-	// Try to get ahead of next write by
-	// spawning go routine if we have capacity
-	if w.nTasks < w.opts.NParallel {
-		w.nTasks += 1
-		w.wg.Add(1)
-		w.opts.WorkerPool.Submit(w.taskF)
-	}
-
 	w.srcBlk = nil
 	w.srcOff = 0
 	w.srcIdx += 1
+}
+
+func (w *asyncWriterT) writeSync() {
+	if err := w._writeSync(); err != nil {
+		w.setError(err)
+	}
+}
+
+func (w *asyncWriterT) _writeSync() error {
+
+	hdrSz, err := header.WriteHeader(w.wr, w.opts)
+	if err != nil {
+		return err
+	}
+
+	var (
+		cmp = w.cmpF.NewCompressor()
+	)
+
+	// Compress and write out the final block.
+	// The dictionary, if included, is applied by the compressor.
+	dstBlk, err := blk.CompressToBlk(w.srcBlk.Data(), cmp, w.bsz, w.opts.BlockChecksum, nil)
+	if err != nil {
+		return err
+	}
+	defer blk.ReturnBlk(dstBlk)
+
+	_, err = w.wr.Write(dstBlk.Data())
+
+	if err != nil {
+		return err
+	}
+
+	w.opts.Handler(0, int64(hdrSz))
+
+	switch w.opts.ContentChecksum {
+	case true:
+		var hasher xxh32.XXHZero
+		hasher.Write(w.srcBlk.Data())
+		_, err = trailer.WriteTrailerWithHash(w.wr, hasher.Sum32())
+	default:
+		_, err = trailer.WriteTrailer(w.wr)
+	}
+
+	return err
 }
 
 // First error wins.  Nil error will panic.
