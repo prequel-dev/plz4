@@ -150,6 +150,10 @@ func TestContentSizeValidate(t *testing.T) {
 		"one_ok": {
 			data: ploadSzOne,
 		},
+		"one_ok_max_parallel": {
+			opts: []plz4.OptT{plz4.WithParallel(16)},
+			data: ploadSzOne,
+		},
 		"zero_fail": {
 			data: ploadSzOneWithZeroCnt,
 			err:  plz4.ErrContentSize,
