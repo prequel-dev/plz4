@@ -51,6 +51,57 @@ func TestCompressDecompressBlockBasic(t *testing.T) {
 	}
 }
 
+// Verify that WithBlockShrinkToFit shrinks the returned compressed buffer
+// while preserving the compressed contents.
+func TestCompressBlockWithShrinkToFit(t *testing.T) {
+	defer testBorrowed(t)
+
+	src := make([]byte, 4<<10)
+	if _, err := rand.Read(src); err != nil {
+		t.Fatalf("rand.Read failed: %v", err)
+	}
+
+	// Use an oversized destination buffer so that the compressed size is
+	// guaranteed to be smaller than len(dst), regardless of whether the
+	// data is compressible.
+	dst := make([]byte, plz4.CompressBlockBound(len(src))*2)
+
+	cmpNoShrink, err := plz4.CompressBlock(src, plz4.WithBlockDst(dst))
+	if err != nil {
+		t.Fatalf("CompressBlock (no shrink) failed: %v", err)
+	}
+
+	cmpShrink, err := plz4.CompressBlock(src, plz4.WithBlockDst(dst), plz4.WithBlockShrinkToFit(true))
+	if err != nil {
+		t.Fatalf("CompressBlock (shrink) failed: %v", err)
+	}
+
+	if !bytes.Equal(cmpNoShrink, cmpShrink) {
+		t.Fatalf("compressed data mismatch between shrink and no-shrink paths")
+	}
+	if len(cmpNoShrink) == 0 || len(cmpShrink) == 0 {
+		t.Fatalf("expected non-empty compressed buffers")
+	}
+
+	// Without shrink, the result should reuse the provided destination buffer
+	// and retain its capacity.
+	if &cmpNoShrink[0] != &dst[0] {
+		t.Fatalf("expected no-shrink compressed buffer to share underlying array with dst")
+	}
+	if cap(cmpNoShrink) != cap(dst) {
+		t.Fatalf("expected no-shrink compressed buffer to retain dst capacity: got %d, want %d", cap(cmpNoShrink), cap(dst))
+	}
+
+	// With shrink, the result should use a new underlying buffer sized to
+	// the actual compressed length.
+	if &cmpShrink[0] == &dst[0] {
+		t.Fatalf("expected shrink compressed buffer to use a new underlying array")
+	}
+	if cap(cmpShrink) != len(cmpShrink) {
+		t.Fatalf("expected shrink compressed buffer to have cap == len, got len=%d cap=%d", len(cmpShrink), cap(cmpShrink))
+	}
+}
+
 // Verify that compression level option does not break round-trip.
 func TestCompressDecompressBlockWithLevel(t *testing.T) {
 	defer testBorrowed(t)
@@ -78,6 +129,93 @@ func TestCompressDecompressBlockWithLevel(t *testing.T) {
 				t.Fatalf("round-trip mismatch at level %d", lvl)
 			}
 		})
+	}
+}
+
+// Verify that WithBlockShrinkToFit shrinks the decompressed buffer when a
+// destination slice is provided, while still round-tripping the data.
+func TestDecompressBlockWithShrinkToFit(t *testing.T) {
+	defer testBorrowed(t)
+
+	src := make([]byte, 4<<10)
+	if _, err := rand.Read(src); err != nil {
+		t.Fatalf("rand.Read failed: %v", err)
+	}
+
+	cmp, err := plz4.CompressBlock(src)
+	if err != nil {
+		t.Fatalf("CompressBlock failed: %v", err)
+	}
+
+	// Use an oversized destination buffer to make shrink/no-shrink behavior visible.
+	dst := make([]byte, len(src)*2)
+
+	decNoShrink, err := plz4.DecompressBlock(cmp, plz4.WithBlockDst(dst))
+	if err != nil {
+		t.Fatalf("DecompressBlock (no shrink) failed: %v", err)
+	}
+	if !bytes.Equal(src, decNoShrink) {
+		t.Fatalf("no-shrink round-trip mismatch: got %d bytes, want %d", len(decNoShrink), len(src))
+	}
+	if len(decNoShrink) == 0 {
+		t.Fatalf("expected non-empty decompressed buffer")
+	}
+	if &decNoShrink[0] != &dst[0] {
+		t.Fatalf("expected no-shrink result to share underlying array with provided dst")
+	}
+	if cap(decNoShrink) != cap(dst) {
+		t.Fatalf("expected no-shrink result to retain dst capacity: got %d, want %d", cap(decNoShrink), cap(dst))
+	}
+
+	decShrink, err := plz4.DecompressBlock(cmp, plz4.WithBlockDst(dst), plz4.WithBlockShrinkToFit(true))
+	if err != nil {
+		t.Fatalf("DecompressBlock (shrink) failed: %v", err)
+	}
+	if !bytes.Equal(src, decShrink) {
+		t.Fatalf("shrink round-trip mismatch: got %d bytes, want %d", len(decShrink), len(src))
+	}
+	if len(decShrink) == 0 {
+		t.Fatalf("expected non-empty decompressed buffer with shrink")
+	}
+	if &decShrink[0] == &dst[0] {
+		t.Fatalf("expected shrink result to use a new underlying array")
+	}
+	if cap(decShrink) != len(decShrink) {
+		t.Fatalf("expected shrink decompressed buffer to have cap == len, got len=%d cap=%d", len(decShrink), cap(decShrink))
+	}
+}
+
+// Verify that WithBlockShrinkToFit shrinks the decompressed buffer even when
+// no destination buffer is provided (dst == nil).
+func TestDecompressBlockWithShrinkToFitNoDst(t *testing.T) {
+	defer testBorrowed(t)
+
+	src := make([]byte, 4<<10)
+	if _, err := rand.Read(src); err != nil {
+		t.Fatalf("rand.Read failed: %v", err)
+	}
+
+	cmp, err := plz4.CompressBlock(src)
+	if err != nil {
+		t.Fatalf("CompressBlock failed: %v", err)
+	}
+
+	decShrink, err := plz4.DecompressBlock(cmp, plz4.WithBlockShrinkToFit(true))
+	if err != nil {
+		t.Fatalf("DecompressBlock (shrink, no dst) failed: %v", err)
+	}
+
+	if !bytes.Equal(src, decShrink) {
+		t.Fatalf("shrink round-trip mismatch (no dst): got %d bytes, want %d", len(decShrink), len(src))
+	}
+	if len(decShrink) == 0 {
+		t.Fatalf("expected non-empty decompressed buffer with shrink (no dst)")
+	}
+	// When no dst is provided, DecompressBlock allocates an internal buffer.
+	// WithBlockShrinkToFit(true) should return a slice that is tightly sized
+	// to the decompressed length.
+	if cap(decShrink) != len(decShrink) {
+		t.Fatalf("expected shrink decompressed buffer (no dst) to have cap == len, got len=%d cap=%d", len(decShrink), cap(decShrink))
 	}
 }
 

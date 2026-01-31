@@ -1,6 +1,7 @@
 package plz4
 
 import (
+	"github.com/prequel-dev/plz4/internal/pkg/blk"
 	"github.com/prequel-dev/plz4/internal/pkg/compress"
 )
 
@@ -13,9 +14,10 @@ const (
 type BlockOpt func(blockOpt) blockOpt
 
 type blockOpt struct {
-	lvl  LevelT
-	dst  []byte
-	dict *compress.DictT
+	lvl    LevelT
+	dst    []byte
+	shrink bool
+	dict   *compress.DictT
 }
 
 func (o blockOpt) dictData() []byte {
@@ -60,6 +62,18 @@ func WithBlockDst(dst []byte) BlockOpt {
 	}
 }
 
+// If true, will shrink the output buffer to the actual output size.
+// This will allocate a new buffer if necessary.
+// This applies only to block compression/decompression.
+func WithBlockShrinkToFit(shrink bool) BlockOpt {
+	{
+		return func(o blockOpt) blockOpt {
+			o.shrink = shrink
+			return o
+		}
+	}
+}
+
 // Returns maximum compressed block size for input size sz.
 func CompressBlockBound(sz int) int {
 	return compress.CompressBound(sz)
@@ -97,6 +111,10 @@ func CompressBlock(src []byte, opts ...BlockOpt) ([]byte, error) {
 		return nil, err
 	}
 
+	if o.shrink {
+		return blk.ShrinkToFit(dst, n), nil
+	}
+
 	return dst[:n], nil
 }
 
@@ -114,10 +132,14 @@ func DecompressBlock(src []byte, opts ...BlockOpt) ([]byte, error) {
 
 	if dst != nil {
 		n, err := d.Decompress(src, dst)
-		if err != nil {
+		switch {
+		case err != nil:
 			return nil, err
+		case o.shrink:
+			return blk.ShrinkToFit(dst, n), nil
+		default:
+			return dst[:n], nil
 		}
-		return dst[:n], nil
 	}
 
 	// No dst provided, allocate a buffer.
@@ -136,6 +158,9 @@ func DecompressBlock(src []byte, opts ...BlockOpt) ([]byte, error) {
 
 		switch {
 		case err == nil:
+			if o.shrink {
+				return blk.ShrinkToFit(dst, n), nil
+			}
 			return dst[:n], nil
 		case nTry < maxTries:
 			nTry += 1
